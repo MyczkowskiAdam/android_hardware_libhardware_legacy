@@ -24,6 +24,10 @@
 #include <unistd.h>
 #include <poll.h>
 
+#ifndef NO_FINIT_MODULE
+#include <sys/syscall.h>
+#endif
+
 #ifdef USES_TI_MAC80211
 #include <dirent.h>
 #include <net/if.h>
@@ -189,8 +193,28 @@ char* get_samsung_wifi_type()
 }
 #endif
 
+#ifdef NO_FINIT_MODULE
+// System call provided by bionic but not in any header file.
+extern int init_module(void *, unsigned long, const char *);
+#endif
+
 static int insmod(const char *filename, const char *args)
 {
+#ifndef NO_FINIT_MODULE
+     /* O_NOFOLLOW is removed as wlan.ko is symlink pointing to
+        the vendor specfic file which is in readonly location */
+     int fd = open(filename, O_RDONLY | O_CLOEXEC);
+     if (fd == -1) {
+        ALOGD("insmod: open(\"%s\") failed: %s", filename, strerror(errno));
+        return -1;
+     }
+     int rc = syscall(__NR_finit_module, fd, args, 0);
+     if (rc == -1) {
+       ALOGD("finit_module for \"%s\" failed: %s", filename, strerror(errno));
+     }
+     close(fd);
+     return rc;
+#else
     void *module;
     unsigned int size;
     int ret;
@@ -204,6 +228,7 @@ static int insmod(const char *filename, const char *args)
     free(module);
 
     return ret;
+#endif
 }
 
 static int rmmod(const char *modname)
